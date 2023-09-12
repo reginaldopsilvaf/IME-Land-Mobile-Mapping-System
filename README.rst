@@ -21,18 +21,16 @@ The following briefly covers the mounting of a dual system of converging cameras
 #. Calibration of cameras to obtain interior orientation parameters;
 #. Estimation of camera system assembly parameters;
 #. Generation of a virtual image (mosaic of images) for each pair of images taken at the same time by the dual camera system; 
-#. Estimation of exterior orientation parameters from at least 3 virtual images using phototriangulation by beams of perspective light rays (Equation of
-collinearity);
-#. Estimation of camera system assembly parameters;
+#. Estimation of exterior orientation parameters from at least 3 virtual images using phototriangulation by beams of perspective light rays (Equation of collinearity);
+#. Collection of homologous points between virtual images and calculation of their respective XYZ coordinates in the terrestrial reference system via phototriangulation or photogrammetric intersection;
+#. Generation of the digital surface model of the region in question from the XYZ coordinates (CloudCompare software);
 
-Combined, spatial data types, indexes, and functions provide a flexible structure for optimized performance and analysis.
-
-In the Beginning
+Description
 ----------------
 
-In legacy first-generation `GIS` implementations, all spatial data is stored in flat files and special `GIS` software is required to interpret and manipulate the data.  These first-generation management systems are designed to meet the needs of users where all required data is within the user's organizational domain.  They are proprietary, self-contained systems specifically built for handling spatial data.  
+This project was proposed as a requirement for completing the digital photogrammetry discipline of the Cartographic Engineering course at the Instituto Militar de Engenharia, taught by professor Daniel Rodrigues dos Santos.  
 
-Second-generation spatial systems store some data in relational databases (usually the "attribute" or non-spatial parts) but still lack the flexibility afforded with direct integration.  
+This project was carried out by 4th year students Matheus Alves Silva and Reginaldo Pereira da Silva Filho during the first semester of 2023. 
 
 **True spatial databases were born when people started to treat spatial features as first class database objects.**  
 
