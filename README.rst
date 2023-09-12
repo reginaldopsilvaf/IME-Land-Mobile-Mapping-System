@@ -3,20 +3,27 @@
 Introduction
 ************
 
-What is a Spatial Database?
+About this project
 ===========================
 
-PostGIS_ is a spatial database. Oracle Spatial and SQL Server (2008 and later) are also spatial databases. But what does that mean; what is it that makes an ordinary database a spatial database?
+Development of a system
+low-cost portable terrestrial mobile mapping based on a system
+dual converging cameras.
 
-The short answer, is...
+In practice, each pair of images taken by the system was used for the
+formation of a virtual image. Subsequently, the virtual images were used in the process of
+phototriangulation of images to generate a digital surface model (MDS) of a given
+region.
 
-**Spatial databases store and manipulate spatial objects like any other object in the database.**
+The following briefly covers the mounting of a dual system of converging cameras.
 
-The following briefly covers the evolution of spatial databases, and then reviews three aspects that associate *spatial* data with a database -- data types, indexes, and functions.
-
-#. **Spatial data types** refer to shapes such as point, line, and polygon; 
-#. Multi-dimensional **spatial indexing** is used for efficient processing of spatial operations;
-#. **Spatial functions**, posed in `SQL`, are for querying of spatial properties and relationships.
+#. Setting the cameras in a convergent configuration; 
+#. Calibration of cameras to obtain interior orientation parameters;
+#. Estimation of camera system assembly parameters;
+#. Generation of a virtual image (mosaic of images) for each pair of images taken at the same time by the dual camera system; 
+#. Estimation of exterior orientation parameters from at least 3 virtual images using phototriangulation by beams of perspective light rays (Equation of
+collinearity);
+#. Estimation of camera system assembly parameters;
 
 Combined, spatial data types, indexes, and functions provide a flexible structure for optimized performance and analysis.
 
