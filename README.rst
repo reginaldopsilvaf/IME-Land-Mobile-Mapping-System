@@ -1,639 +1,246 @@
-.. _geometries:
-
-Geometries
-==========
+.. _introduction:
 
 Introduction
-------------
+************
 
-In the previous `section <./loading_data.rst>`_, we loaded a variety of data.
+What is a Spatial Database?
+===========================
 
-Before we start playing with our data lets have a look at some simpler examples.
+PostGIS_ is a spatial database. Oracle Spatial and SQL Server (2008 and later) are also spatial databases. But what does that mean; what is it that makes an ordinary database a spatial database?
 
-  In pgAdmin, once again select the **nyc** database and open the SQL query tool.
-  
-  Paste this example SQL_ code into the pgAdmin SQL Editor window (removing any text that may be there by default) and then execute.
+The short answer, is...
 
-.. code-block:: sql
+**Spatial databases store and manipulate spatial objects like any other object in the database.**
 
-    CREATE TABLE geometries (id integer, name varchar, geom geometry);
+The following briefly covers the evolution of spatial databases, and then reviews three aspects that associate *spatial* data with a database -- data types, indexes, and functions.
 
-    INSERT INTO geometries VALUES
-    (1, 'Point', 'POINT(0 0)'),
-    (2, 'Linestring', 'LINESTRING(0 0, 1 1, 2 1, 2 2)'),
-    (3, 'Polygon', 'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'),
-    (4, 'PolygonWithHole', 'POLYGON((2 0, 12 0, 12 10, 2 10, 2 0),(3 1, 4 1, 4 2, 3 2, 3 1))'),
-    (5, 'Collection', 'GEOMETRYCOLLECTION(POINT(2 1),POLYGON((5 3, 6 3, 6 4, 5 4, 5 3)))');
+#. **Spatial data types** refer to shapes such as point, line, and polygon; 
+#. Multi-dimensional **spatial indexing** is used for efficient processing of spatial operations;
+#. **Spatial functions**, posed in `SQL`, are for querying of spatial properties and relationships.
 
-    SELECT id, name, ST_AsText(geom) FROM geometries;
+Combined, spatial data types, indexes, and functions provide a flexible structure for optimized performance and analysis.
 
-::
+In the Beginning
+----------------
 
-   id |      name       |                           st_astext
-  ----+-----------------+---------------------------------------------------------------
-    1 | Point           | POINT(0 0)
-    2 | Linestring      | LINESTRING(0 0,1 1,2 1,2 2)
-    3 | Polygon         | POLYGON((0 0,1 0,1 1,0 1,0 0))
-    4 | PolygonWithHole | POLYGON((2 0,12 0,12 10,2 10,2 0),(3 1,4 1,4 2,3 2,3 1))
-    5 | Collection      | GEOMETRYCOLLECTION(POINT(2 1),POLYGON((5 3,6 3,6 4,5 4,5 3)))
+In legacy first-generation `GIS` implementations, all spatial data is stored in flat files and special `GIS` software is required to interpret and manipulate the data.  These first-generation management systems are designed to meet the needs of users where all required data is within the user's organizational domain.  They are proprietary, self-contained systems specifically built for handling spatial data.  
 
-The above example CREATEs a table (**geometries**) then INSERTs five geometries: a point, a line, a polygon, a polygon with a hole, and a collection. Finally, the inserted rows are SELECTed and displayed in the Output pane.
+Second-generation spatial systems store some data in relational databases (usually the "attribute" or non-spatial parts) but still lack the flexibility afforded with direct integration.  
 
-Metadata Tables
----------------
+**True spatial databases were born when people started to treat spatial features as first class database objects.**  
 
-In conformance with the OpenGIS Implementation Specification for Geographic information-Simple feature access (SFSQL_) or by the ISO/IEC 13249-3:2016 Part 3: Spatial (SQLMM_), **PostGIS** provides two tables to track and report on the geometry types available in a given database.
+Spatial databases fully integrate spatial data with an object relational database.  The orientation changes from GIS-centric to database-centric.     
 
-* The first table, ``spatial_ref_sys``, defines all the spatial reference systems known to the database and will be described in greater detail later.
-* The second table (actually, a view), ``geometry_columns``, provides a listing of all "features" (defined as an object with geometric attributes), and the basic details of those features.
-
-.. image:: ./geometries/table01.png
-  :class: inline
-
-Let's have a look at the ``geometry_columns`` table in our database.
-
-  Paste this command in the Query Tool as before:
-
-.. code-block:: sql
-
-  SELECT * FROM geometry_columns;
-
-::
-
-   f_table_catalog | f_table_schema |    f_table_name     | f_geometry_column | coord_dimension | srid  |      type
-  -----------------+----------------+---------------------+-------------------+-----------------+-------+-----------------
-   nyc             | public         | nyc_census_blocks   | geom              |               2 | 26918 | MULTIPOLYGON
-   nyc             | public         | nyc_homicides       | geom              |               2 | 26918 | POINT
-   nyc             | public         | nyc_neighborhoods   | geom              |               2 | 26918 | MULTIPOLYGON
-   nyc             | public         | nyc_streets         | geom              |               2 | 26918 | MULTILINESTRING
-   nyc             | public         | nyc_subway_stations | geom              |               2 | 26918 | POINT
-   nyc             | public         | geometries          | geom              |               2 |     0 | GEOMETRY
-
-* ``f_table_catalog``, ``f_table_schema``, and ``f_table_name`` provide the fully qualified name of the feature table containing a given geometry.  Because PostgreSQL doesn't make use of catalogs, ``f_table_catalog`` will tend to be empty.
-* ``f_geometry_column`` is the name of the column that geometry containing column -- for feature tables with multiple geometry columns, there will be one record for each.
-* ``coord_dimension`` and ``srid`` (SRID_) define the the dimension of the geometry (2-, 3- or 4-dimensional) and the Spatial Reference system identifier that refers to the ``spatial_ref_sys`` table respectively.
-* The ``type`` column defines the type of geometry as described below; we've seen Point and Linestring types so far.
-
-By querying this table, GIS clients and libraries can determine what to expect when retrieving data and can perform any necessary projection, processing or rendering without needing to inspect each geometry.
-
------
-
-.. note:: - Do some or all of your ``nyc`` tables not have an ``srid`` of 26918? It's easy to fix by updating the table
-
------
-
-.. code-block:: sql
-
-      SELECT UpdateGeometrySRID('nyc_neighborhoods','geom',26918);
-
-Representing Real World Objects
--------------------------------
-
-The OpenGIS Implementation Specification for Geographic information-Simple feature access (SFSQL_), the original guiding standard for PostGIS development, defines how a real world object is represented.  By taking a continuous shape and digitizing it at a fixed resolution we achieve a passable representation of the object. 
-
-SFSQL_ only handled 2-dimensional representations.  PostGIS has extended that to include 3- and 4-dimensional representations; more recently the SQL-Multimedia Part 3 (SQLMM_) specification has officially defined their own representation.
-
-Our example table contains a mixture of different geometry types. We can collect general information about each object using functions that read the geometry metadata.
-
-* ST_GeometryType_ (geometry) returns the type of the geometry
-* ST_NDims_ (geometry) returns the number of dimensions of the geometry
-* ST_SRID_ (geometry) returns the spatial reference identifier number of the geometry
-
-.. code-block:: sql
-
-    SELECT name, ST_GeometryType(geom), ST_NDims(geom), ST_SRID(geom)
-    FROM geometries;
-
-::
-
-       name       |    st_geometrytype    | st_ndims | st_srid
- -----------------+-----------------------+----------+---------
-  Point           | ST_Point              |        2 |       0
-  Polygon         | ST_Polygon            |        2 |       0
-  PolygonWithHole | ST_Polygon            |        2 |       0
-  Collection      | ST_GeometryCollection |        2 |       0
-  Linestring      | ST_LineString         |        2 |       0
-
-
-Points
-~~~~~~
-
-.. image:: ./introduction/points.png
+.. image:: ./introduction/beginning.png
   :align: center
   :class: inline
 
-A spatial **point** represents a single location on the Earth. This point is represented by a single coordinate (including either 2-, 3- or 4-dimensions).  Points are used to represent objects when the exact details, such as shape and size, are not important at the target scale.  For example, cities on a map of the world can be described as points, while a map of a single state might represent cities as polygons.
+(Yeung & Hall, 2007)
 
-.. code-block:: sql
+-------
 
-    SELECT ST_AsText(geom)
-    FROM geometries
-    WHERE name = 'Point';
+.. note:: A spatial database management system may be used in applications besides the geographic world.  Spatial databases are used to manage data related to the anatomy of the human body, large-scale integrated circuits, molecular structures, and electro-magnetic fields, among others.
 
-::
+-------
 
-   st_astext
-  ------------
-   POINT(0 0)
+Spatial Data Types
+------------------
 
-Some of the specific spatial functions for working with points are:
+An ordinary database has strings, numbers, and dates. A spatial database adds additional (spatial) types for representing **geographic features**. These spatial data types abstract and encapsulate spatial structures such as boundary and dimension. In many respects, spatial data types can be understood simply as shapes.
 
-* ST_X_ (geometry) returns the X ordinate
-* ST_Y_ (geometry) returns the Y ordinate
-
-So, we can read the ordinates from a point like this:
-
-.. code-block:: sql
-
-  SELECT ST_X(geom), ST_Y(geom)
-  FROM geometries
-  WHERE name = 'Point';
-  
-::
-
-   st_x | st_y
-  ------+------
-      0 |    0
-
-The New York City subway stations (``nyc_subway_stations``) table is a data set represented as points. The following SQL_ query will return the geometry associated with one point (in the ST_AsText_ column).
-
-.. code-block:: sql
-
-    SELECT name, ST_AsText(geom)
-    FROM nyc_subway_stations
-    LIMIT 1;
-
-::
-
-       name     |                st_astext
-  --------------+------------------------------------------
-   Cortlandt St | POINT(583521.854408956 4507077.86259909)
-
-Linestrings
-~~~~~~~~~~~
-
-.. image:: ./introduction/lines.png
+.. image:: ./introduction/hierarchy.png
   :align: center
   :class: inline
 
-A **linestring** is a path between locations.  It takes the form of an ordered series of two or more points.  Roads and rivers are typically represented as linestrings.  A linestring is said to be **closed** if it starts and ends on the same point.  It is said to be **simple** if it does not cross or touch itself (except at its endpoints if it is closed).  A linestring can be both **closed** and **simple**.
+Spatial data types are organized in a type hierarchy.  Each sub-type inherits the structure (attributes) and the behavior (methods or functions) of its super-type. 
 
-The street network for New York (``nyc_streets``) was loaded earlier in the workshop.  This dataset contains details such as name, and type.  A single real world street may consist of many linestrings, each representing a segment of road with different attributes.
 
-The following SQL_ query will return the geometry associated with one linestring (in the ST_AsText_ column).
+Spatial Indexes and Bounding Boxes
+----------------------------------
 
-.. code-block:: sql
+An ordinary database provides "access methods" -- commonly known as **indexes** -- to allow for fast and random access to subsets of data.  Indexing for standard types (numbers, strings, dates) is usually done with B-tree_ indexes.  A B-tree_ partitions the data using the natural sort order to put the data into a hierarchical tree.
 
-    SELECT ST_AsText(geom)
-    FROM geometries
-    WHERE name = 'Linestring';
+The natural sort order of numbers, strings, and dates is simple to determine -- every value is less than, greater than or equal to every other value. But because polygons can overlap, can be contained in one another, and are arrayed in a two-dimensional (or more) space, a B-tree cannot be used to efficiently index them. Real spatial databases provide a "spatial index" that instead answers the question "which objects are within this particular bounding box?".  
 
-::
+A **bounding box** is the smallest rectangle -- parallel to the coordinate axes -- capable of containing a given feature.
 
-            st_astext
-  -----------------------------
-   LINESTRING(0 0,1 1,2 1,2 2)
-
-Some of the specific spatial functions for working with linestrings are:
-
-* ST_Length_ (geometry) returns the length of the linestring
-* ST_StartPoint_ (geometry) returns the first coordinate as a point
-* ST_EndPoint_ (geometry) returns the last coordinate as a point
-* ST_NPoints_ (geometry) returns the number of coordinates in the linestring
-
-So, the length of our linestring is:
-
-.. code-block:: sql
-
-  SELECT ST_Length(geom)
-  FROM geometries
-  WHERE name = 'Linestring';
-
-::
-
-      st_length
-  ------------------
-   3.41421356237309
-
-Polygons
-~~~~~~~~
-
-.. image:: ./introduction/polygons.png
+.. image:: ./introduction/boundingbox.png
   :align: center
   :class: inline
 
-A polygon is a representation of an area. The outer boundary of the polygon is represented by a ring.
+Bounding boxes are used because answering the question "is A inside B?" is very computationally intensive for polygons but very fast in the case of rectangles.  Even the most complex polygons and linestrings can be represented by a simple bounding box.
 
-This ring is a linestring that is both closed and simple as defined above. Holes within the polygon are also represented by rings.
+Indexes have to perform quickly in order to be useful. So instead of providing exact results, as B-trees do, spatial indexes provide approximate results. The question "what lines are inside this polygon?" will be instead interpreted by a spatial index as "what lines have bounding boxes that are contained inside this polygon's bounding box?" 
 
-Polygons are used to represent objects whose size and shape are important. City limits, parks, building footprints or bodies of water are all commonly represented as polygons when the scale is sufficiently high to see their area.  Roads and rivers can sometimes be represented as polygons.
+The actual spatial indexes implemented by various databases vary widely. The most common implementation is the R-tree_ (used in PostGIS_), but there are also Quadtrees_, and `Grid Based Indexes <http://en.wikipedia.org/wiki/Grid_(spatial_index)>`_ in other spatial databases.
 
-The following SQL query will return the geometry associated with one linestring (in the ST_AsText_ column).
-
-.. code-block:: sql
-
-  SELECT ST_AsText(geom)
-  FROM geometries
-  WHERE name LIKE 'Polygon%';
-  
-::
-
-                          st_astext
-  ----------------------------------------------------------
-   POLYGON((0 0,1 0,1 1,0 1,0 0))
-   POLYGON((2 0,12 0,12 10,2 10,2 0),(3 1,4 1,4 2,3 2,3 1))
-
---------
-
-.. note:: - Rather than using an ``=`` sign in our ``WHERE`` clause, we are using the ``LIKE`` operator to carry out a string matching operation. You may be used to the ´´ * ´´ symbol as a glob_ for pattern matching, but in SQL_ the ``%`` symbol is used**, along with the ``LIKE`` operator to tell the system to do globbing_.
-
---------
-
-The first polygon has only one ring. The second one has an interior "hole". Most graphics systems include the concept of a "polygon", but GIS systems are relatively unique in allowing polygons to explicitly have holes.
-
-.. image:: ./screenshots/polygons.png
-
-Some of the specific spatial functions for working with polygons are:
-
-* ST_Area_ (geometry) returns the area of the polygons
-* ST_NRings_ (geometry) returns the number of rings (usually 1, more of there are holes)
-* ST_ExteriorRing_ (geometry) returns the outer ring as a linestring
-* ST_InteriorRingN_ (geometry,n) returns a specified interior ring as a linestring
-* ST_Perimeter_ (geometry) returns the length of all the rings
-
-We can calculate the area of our polygons using the area function:
-
-.. code-block:: sql
-
-  SELECT name, ST_Area(geom)
-  FROM geometries
-  WHERE name LIKE 'Polygon%';
-
-::
-
-        name       | st_area
-  -----------------+---------
-   Polygon         |       1
-   PolygonWithHole |      99
-
-Note that the polygon with a hole has an area that is the area of the outer shell (a 10x10 square) minus the area of the hole (a 1x1 square).
-
-Collections
-~~~~~~~~~~~
-
-There are four collection types, which group multiple simple geometries into sets.
-
-* **MultiPoint**, a collection of points
-* **MultiLineString**, a collection of linestrings
-* **MultiPolygon**, a collection of polygons
-* **GeometryCollection**, a heterogeneous collection of any geometry (including other collections)
-
-Collections are another concept that shows up in GIS software more than in generic graphics software. They are useful for directly modeling real world objects as spatial objects. For example, how to model a lot that is split by a right-of-way? As a **MultiPolygon**, with a part on either side of the right-of-way.
-
-.. image:: ./screenshots/collection2.png
-
-Our example collection contains a polygon and a point:
-
-.. code-block:: sql
-
-  SELECT name, ST_AsText(geom)
-  FROM geometries
-  WHERE name = 'Collection';
-
-::
-
-      name    |                           st_astext
-  ------------+---------------------------------------------------------------
-   Collection | GEOMETRYCOLLECTION(POINT(2 1),POLYGON((5 3,6 3,6 4,5 4,5 3)))
-
-.. image:: ./screenshots/collection.png
-
-Some of the specific spatial functions for working with collections are:
-
-* ST_NumGeometries_ (geometry) returns the number of parts in the collection
-* ST_GeometryN_ (geometry,n) returns the specified part
-* ST_AsText_ (geometry) returns the total area of all polygonal parts
-* ST_Length_ (geometry) returns the total length of all linear parts
-
-Geometry Input and Output
--------------------------
-
-Within the database, geometries are stored on disk in a format only used by the PostGIS program. In order for external programs to insert and retrieve useful geometries, they need to be converted into a format that other applications can understand. Fortunately, PostGIS supports emitting and consuming geometries in a large number of formats:
-
-* Well-known text (WKT_)
-
-  * ST_GeomFromText_ (text, srid) returns ``geometry``
-  * ST_AsText_ (geometry) returns ``text``
-  * ST_AsEWKT_ (geometry) returns ``text``
-
-* Well-known binary (WKB_)
-
-  * ST_GeomFromWKB_ (bytea) returns ``geometry``
-  * ST_AsBinary_ (geometry) returns ``bytea``
-  * ST_AsEWKB_ (geometry) returns ``bytea``
-
-* Geographic Mark-up Language (GML_)
-
-  * ST_GeomFromGML_ (text) returns ``geometry``
-  * ST_AsGML_ (geometry) returns ``text``
-
-* Keyhole Mark-up Language (KML_)
-
-  * ST_GeomFromKML_ (text) returns ``geometry``
-  * ST_AsKML_ (geometry) returns ``text``
-
-* GeoJSON_
-
-  * ST_AsGeoJSON_ (geometry) returns ``text``
-
-* Scalable Vector Graphics (SVG_)
-
-  * ST_AsSVG_ (geometry) returns ``text``
-
-The most common use of a constructor is to turn a text representation of a geometry into an internal representation:
-
-.. code-block::sql
-
-  SELECT ST_GeomFromText('POINT(583571 4506714)',26918);
-  
-                    st_geomfromtext
-  ----------------------------------------------------
-   0101000020266900000000000026CF21410000008016315141
-
-Note that in addition to a text parameter with a geometry representation, we also have a numeric parameter providing the SRID_ of the geometry.
-
-The following SQL query shows an example of WKB_ representation (the call to encode_() is required to convert the binary output into an ASCII form for printing):
-
-.. code-block:: sql
-
-  SELECT encode(
-    ST_AsBinary(ST_GeometryFromText('LINESTRING(0 0,1 0)')),
-    'hex');
-
-::
-
-                                         encode
-  ------------------------------------------------------------------------------------
-   01020000000200000000000000000000000000000000000000000000000000f03f0000000000000000
-
-For the purposes of this workshop we will continue to use WKT_ to ensure you can read and understand the geometries we're viewing.  However, most actual processes, such as viewing data in a GIS application, transferring data to a web service, or processing data remotely, WKB_ is the format of choice.
-
-Since WKT and WKB were defined in the SFSQL_ specification, they do not handle 3- or 4-dimensional geometries.  For these cases PostGIS has defined the Extended Well Known Text (EWKT_) and Extended Well Known Binary (EWKB_) formats.  These provide the same formatting capabilities of WKT_ and WKB_ with the added dimensionality.
-
-Here is an example of a 3D linestring in WKT_:
-
-.. code-block:: sql
-
-  SELECT ST_AsText(ST_GeometryFromText('LINESTRING(0 0 0,1 0 0,1 1 2)'));
-
-::
-
-              st_astext
-  ----------------------------------
-   LINESTRING Z (0 0 0,1 0 0,1 1 2)
-
-Note that the text representation changes! This is because the text input routine for PostGIS is liberal in what it consumes. It will consume
-
-* hex-encoded EWKB_,
-* extended well-known text (EWKT_), and
-* ISO standard well-known text (WKT_).
-
-On the output side, the ST_AsText_ function is conservative, and only emits ISO standard well-known text.
-
-In addition to the ST_GeomFromText_ function, there are many other ways to create geometries from well-known text or similar formatted inputs:
-
-- Using ST_GeomFromText_ with the SRID_ parameter
-
-.. code-block:: sql
-
-  SELECT ST_GeomFromText('POINT(2 2)',4326);
-
-- Using ST_GeomFromText_ without the SRID_ parameter
-  
-.. code-block:: sql
-
-  SELECT ST_SetSRID(ST_GeomFromText('POINT(2 2)'),4326);
-  
-- Using a ST_MakePoint_ function
-
-.. code-block:: sql
-  
-  SELECT ST_SetSRID(ST_MakePoint(2, 2), 4326);
-
-- Using PostgreSQL casting syntax and ISO WKT_
-
-.. code-block:: sql
-
-  SELECT ST_SetSRID('POINT(2 2)'::geometry, 4326);
-
-- Using PostgreSQL casting syntax and Extended WKT (EWKT_)
-
-.. code-block:: sql
-
-  SELECT 'SRID=4326;POINT(2 2)'::geometry;
-
-In addition to emitters for the various forms (WKT_, WKB_, GML_, KML_, JSON_, SVG_), PostGIS also has consumers for four (WKT_, WKB_, GML_, KML_). Most applications use the WKT_ or WKB_ geometry creation functions, but the others work too. Here's an example that consumes GML_ and output JSON_:
-
-.. code-block:: sql
-
-  SELECT ST_AsGeoJSON(ST_GeomFromGML('<gml:Point><gml:coordinates>1,1</gml:coordinates></gml:Point>'));
-
-::
-
-               st_asgeojson
-  --------------------------------------
-   {"type":"Point","coordinates":[1,1]}
-
-Casting from Text
+Spatial Functions
 -----------------
 
-The WKT_ strings we've see so far have been of type 'text' and we have been converting them to type 'geometry' using PostGIS functions like ST_GeomFromText_ ().
+For manipulating data during a query, an ordinary database provides **functions** such as concatenating strings, performing hash operations on strings, doing mathematics on numbers, and extracting information from dates.  A spatial database provides a complete set of functions for analyzing geometric components, determining spatial relationships, and manipulating geometries.  These spatial functions serve as the building block for any spatial project.
 
-PostgreSQL includes a short form syntax that allows data to be converted from one type to another, the casting syntax, `oldata::newtype`. So for example, this SQL_ converts a double into a text string.
+The majority of all spatial functions can be grouped into one of the following five categories:
 
-.. code-block:: sql
+#. **Conversion**: Functions that *convert* between geometries and external data formats. 
+#. **Management**: Functions that *manage* information about spatial tables and PostGIS administration.
+#. **Retrieval**: Functions that *retrieve* properties and measurements of a Geometry. 
+#. **Comparison**: Functions that *compare* two geometries with respect to their spatial relation. 
+#. **Generation**: Functions that *generate* new geometries from others.
 
-  SELECT 0.9::text;
+The list of possible functions is very large, but a common set of functions is defined by the Open Geospatial Consortium (OGC_) from the "OpenGIS Implementation Specification for Geographic Information-Simple Feature Access" (SFSQL_) specification or the ISO from the "ISO/IEC 13249-3: 2016 Part 3: Spatial "(SQLMM_). But nothing prevents spatial database system software from adopting its own spatial functions. In the case of PostGIS, it has several spatial functions implemented by OGC/ISO, as well as its own spatial functions.
 
-::
+What is PostGIS?
+================
 
-   text
-  ------
-   0.9
+PostGIS turns the PostgreSQL_ Database Management System into a spatial database by adding support for the three features: spatial types, indexes, and functions.  Because it is built on PostgreSQL, PostGIS automatically inherits important "enterprise" features as well as open standards for implementation 
 
-Less trivially, this SQL_ converts a WKT_ string into a geometry:
+But what is PostgreSQL?
+-----------------------
 
-.. code-block:: sql
+PostgreSQL is a powerful, object-relational database management system (ORDBMS). It is released under a BSD-style license and is thus free and open source software. As with many other open source programs, PostgreSQL is not controlled by any single company, but has a global community of developers and companies to develop it.
 
-  SELECT 'POINT(0 0)'::geometry;
-  
-::
+PostgreSQL was designed from the very start with type extension in mind -- the ability to add new data types, functions and access methods at run-time. Because of this, the PostGIS extension can be developed by a separate development team, yet still integrate very tightly into the core PostgreSQL database.
 
-                    geometry
-  --------------------------------------------
-   010100000000000000000000000000000000000000
+Why choose PostgreSQL?
+~~~~~~~~~~~~~~~~~~~~~~
 
-One thing to note about using casting to create geometries: unless you specify the SRID_, you will get a geometry with an unknown SRID_. You can specify the SRID_ using the "Extended" Well-Known Text (EWKT_) form, which includes an SRID_ block at the front:
+A common question from people familiar with open source databases is, "Why wasn't PostGIS built on MySQL?".
 
-.. code-block:: sql
+PostgreSQL has:
 
-  SELECT 'SRID=4326;POINT(0 0)'::geometry;
+* Proven reliability and transactional integrity by default (ACID)
+* Careful support for SQL standards (full SQL92)
+* Pluggable type extension and function extension
+* Community-oriented development model
+* No limit on column sizes ("TOAST"able tuples) to support big GIS objects
+* Generic index structure (GiST) to allow R-Tree index
+* Easy to add custom functions
 
-::
+Combined, PostgreSQL provides a very easy development path to add new spatial types. In the proprietary world, only Illustra (now Informix Universal Server) allows such easy extension. This is no coincidence; Illustra is a proprietary re-working of the original PostgreSQL code base from the 1980's. 
 
-                        geometry
-  ----------------------------------------------------
-   0101000020E610000000000000000000000000000000000000
- 
-It's very common to use the casting notation when working with WKT_, as well as ``geometry`` and ``geography`` columns.
+Because the development path for adding types to PostgreSQL was so straightforward, it made sense to start there. When MySQL released basic spatial types in version 4.1, the PostGIS team took a look at their code, and the exercise reinforced the original decision to use PostgreSQL. Because MySQL spatial objects had to be hacked on top of the string type as a special case, the MySQL code was spread over the entire code base. Development of PostGIS 0.1 took under a month. Doing a "MyGIS" 0.1 would have taken a lot longer, and as such, might never have seen the light of day.
 
-Function List
--------------
+Why not Shapefiles?
+-------------------
 
-ST_Area_ : Returns the area of the surface if it is a polygon or multi-polygon. For ``geometry`` type area is in SRID_ units. For ``geography`` area is in square meters.
+The shapefile_ (and other file formats) have been the standard way of storing and interacting with spatial data since GIS software was first written. However, these "flat" files have the following disadvantages:
 
-ST_AsText_ : Returns the Well-Known Text (WKT_) representation of the geometry/geography without SRID_ metadata.
+* **Files require special software to read and write.**  SQL is an abstraction for random data access and analysis. Without that abstraction, you will need to write all the access and analysis code yourself.
+* **Concurrent users can cause corruption.** While it's possible to write extra code to ensure that multiple writes to the same file do not corrupt the data, by the time you have solved the problem and also solved the associated performance problem, you will have written the better part of a database system. Why not just use a standard database?
+* **Complicated questions require complicated software to answer.** Complicated and interesting questions (spatial joins, aggregations, etc) that are expressible in one line of SQL in the database take hundreds of lines of specialized code to answer when programming against files.
 
-ST_AsBinary_ : Returns the Well-Known Binary (WKB_) representation of the geometry/geography without SRID_ meta data.
+Most users of PostGIS are setting up systems where multiple applications will be expected to access the data, so having a standard SQL access method simplifies deployment and development. Some users are working with large data sets; with files, they might be segmented into multiple files, but in a database they can be stored as a single large table.
 
-ST_EndPoint_ : Returns the last point of a LINESTRING geometry as a POINT.
+In summation, the combination of support for multiple users, complex ad hoc queries, and performance on large data sets are what sets spatial databases apart from file-based systems.
 
-ST_AsEWKB_ : Returns the Well-Known Binary (WKB_) representation of the geometry with SRID_ meta data.
+For more information, access http://switchfromshapefile.org/
 
-ST_AsEWKT_  : Returns the Well-Known Text (WKT_) representation of the geometry with SRID_ meta data.
+Why Geopackage?
+---------------
 
-ST_AsGeoJSON_ : Returns the geometry as a GeoJSON_ element.
+GeoPackage_ (GPKG) is an open, non-proprietary, platform-independent spatial data format and is based on standards for geographic information system implemented as a SQLite database container. Defined by the Open Geospatial Consortium (OGC_) with support from the US military and published in 2014, GeoPackage has received wide support from various government, commercial and open source organizations.
 
-ST_AsGML_ : Returns the geometry as a GML_ version 2 or 3 element.
+A GeoPackage is built as an extended SQLite 3 database file (*.gpkg) that contains data tables and metadata with specified definitions, integrity constraints, format limitations, and content restrictions. The GeoPackage standard describes a set of conventions (requirements) for storing data in vector and matrix formats at various scales, schemas, and metadata. A GeoPackage can be extended using extension rules as defined in clause 2.3 of the standard. The OGC GeoPackage standard specifies a set of extensions approved by OGC members in Annex F.
 
-ST_AsKML_ : Returns the geometry as a KML_ element. Several variants. Default version=2, default precision=15.
+GeoPackage is designed to be as light as possible, shared in a single file and ready to use. This makes it suitable for mobile applications in offline mode and for fast sharing through cloud storage, USB drives and etc. Geopackage format has SQLite RTree spatial indexes that improve performance in spatial queries compared to traditional geospatial file formats.
 
-ST_AsSVG_ : Returns a Geometry in SVG_ path data given a geometry or geography object.
+Compared to shapefile, geopackage supports non-spatial data types such as integer, real, text, blob, date, null values, and has no limitation on the length of table column names, which in shapefile has a 10 character limitation. . But one of the main differences between Shapefile and Geopackage is that shapefile has a limit on its storage capacity of 2 GB, while the Geopakcage limit is much higher: 140,000 GB.
 
-ST_ExteriorRing_ : Returns a line string representing the exterior ring of the POLYGON geometry. Return NULL if the geometry is not a polygon. Will not work with MULTIPOLYGON
+A brief history of PostGIS
+--------------------------
 
-ST_GeometryN_ : Returns the 1-based Nth geometry if the geometry is a GEOMETRYCOLLECTION, MULTIPOINT, MULTILINESTRING, MULTICURVE or MULTIPOLYGON. Otherwise, return NULL.
+In the May of 2001, `Refractions Research <http://www.refractions.net/>`_ released the first version of PostGIS_. PostGIS_ 0.1 had objects, indexes and a handful of functions. The result was a database suitable for storage and retrieval, but not analysis.
 
-ST_GeomFromGML_ : Takes as input GML_ representation of geometry and outputs a PostGIS geometry object.
+As the number of functions increased, the need for an organizing principle became clear.  The "Simple Features for SQL" (SFSQL_) specification from the Open Geospatial Consortium provided such structure with guidelines for function naming and requirements.
 
-ST_GeomFromKML_ : Takes as input KML_ representation of geometry and outputs a PostGIS geometry object
+With PostGIS support for simple analysis and spatial joins, `Mapserver <https://en.wikipedia.org/wiki/MapServer>`_ became the first external application to provide visualization of data in the database. 
 
-ST_GeomFromText_ : Returns a specified ST_Geometry value from Well-Known Text representation (WKT_).
+Over the next several years the number of PostGIS functions grew, but its power remained limited. Many of the most interesting functions (e.g., ST_Intersects(), ST_Buffer(), ST_Union()) were very difficult to code.  Writing them from scratch promised years of work.
 
-ST_GeomFromWKB_ : Creates a geometry instance from a Well-Known Binary geometry representation (WKB_) and optional SRID_.
+Fortunately a second project, the "Geometry Engine, Open Source" or GEOS_, came along. The GEOS_ library provides the necessary algorithms for implementing the SFSQL_ specification. By linking in GEOS_, PostGIS_ provided complete support for SFSQL_ by version 0.8.
 
-ST_GeometryType_ : Returns the geometry type of the ST_Geometry value.
+As PostGIS_ data capacity grew, another issue surfaced: the representation used to store geometry proved relatively inefficient. For small objects like points and short lines, the metadata in the representation had as much as a 300% overhead. For performance reasons, it was necessary to put the representation on a diet.  By shrinking the metadata header and required dimensions, overhead greatly reduced. In PostGIS 1.0, this new, faster, lightweight representation became the default.
 
-ST_InteriorRingN_ : Returns the Nth interior linestring ring of the polygon geometry. Return NULL if the geometry is not a polygon or the given N is out of range.
+Recent updates of PostGIS_ have worked on expanding standards compliance, adding support for curve-based geometries and function signatures specified in the ISO SQLMM_ standard. Through a continued focus on performance, PostGIS_ 1.4 significantly improved the speed of geometry testing routines.
 
-ST_Length_ : Returns the 2d length of the geometry if it is a linestring or multilinestring. geometry are in units of spatial reference and geography are in meters (default spheroid)
+Who uses PostGIS_?
+-----------------
 
-ST_MakePoint_ : Creates a 2D, 3DZ or 4D point geometry (geometry with measure). ST_MakePoint_ while not being OGC compliant is generally faster and more precise than ST_GeomFromText_ and ST_PointFromText. It is also easier to use if you have raw coordinates rather than WKT_.
+For a complete list of case studies, see the `PostGIS case studies <http://postgis.net/casestudy>`_ page.
 
-ST_NDims_ : Returns coordinate dimension of the geometry as a small int. Values are: 2,3 or 4.
+Institut Geographique National, France
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-ST_NPoints_ : Returns the number of points (vertexes) in a geometry.
+IGN is the national mapping agency of France, and uses PostGIS to store the high resolution topographic map of the country, "BDUni". BDUni has more than 100 million features, and is maintained by a staff of over 100 field staff who verify observations and add new mapping to the database daily. The IGN installation uses the database transactional system to ensure consistency during update processes, and a `warm standby system <http://developer.postgresql.org/pgdocs/postgres/warm-standby.html>`_ to maintain uptime in the event of a system failure.
 
-ST_NRings_ : If the geometry is a polygon or multi-polygon returns the number of rings.
+GlobeXplorer
+~~~~~~~~~~~~
 
-ST_NumGeometries_ : If geometry is a GEOMETRYCOLLECTION (or MULTI*) returns the number of geometries, otherwise return NULL.
+GlobeXplorer is a web-based service providing online access to petabytes of global satellite and aerial imagery. GlobeXplorer uses PostGIS to manage the metadata associated with the imagery catalogue, so queries for imagery first search the PostGIS catalogue to find the location of the relevant images, then pull the images from storage and return them to the client. In building their system, GlobeXplorer tried other spatial databases but eventually settled on PostGIS because of the great combination of price and performance it offers.
 
-ST_Perimeter_ : Returns the length measurement of the boundary of an ST_Surface or ST_MultiSurface value. (Polygon, Multipolygon)
+What applications support PostGIS?
+----------------------------------
 
-ST_SRID_ : Returns the spatial reference identifier for the ST_Geometry as defined in spatial_ref_sys table.
+PostGIS has become a widely used spatial database, and the number of third-party programs that support storing and retrieving data using it has increased as well. The `programs that support PostGIS <http://trac.osgeo.org/postgis/wiki/UsersWikiToolsSupportPostgis>`_ include both open source and proprietary software on both server and desktop systems.
 
-ST_StartPoint_ : Returns the first point of a LINESTRING geometry as a POINT.
+The following table shows a list of some of the software that leverages PostGIS_:
 
-ST_X_ : Returns the X coordinate of the point, or NULL if not available. Input must be a point.
++-------------------------------------------------+----------------------------------------------+
+| Open/Free                                       | Closed/Proprietary                           |
++=================================================+==============================================+
+|                                                 |                                              |   
+| * Loading/Extracting                            | * Loading/Extracting                         |   
+|                                                 |                                              |     
+|   * Shp2Pgsql                                   |   * Safe FME Desktop Translator/Converter    |      
+|   * ogr2ogr                                     |                                              |        
+|   * Dxf2PostGIS                                 |                                              |          
+|                                                 | * Web-Based                                  |         
+| * Web-Based                                     |                                              |             
+|                                                 |   * Ionic Red Spider (now ERDAS)             |              
+|   * Mapserver                                   |   * Cadcorp GeognoSIS                        |            
+|   * GeoServer (Java-based WFS / WMS -server )   |   * Iwan Mapserver                           |     
+|   * SharpMap SDK - for ASP.NET 2.0              |   * MapDotNet Server                         |      
+|   * MapGuide Open Source (using FDO)            |   * MapGuide Enterprise (using FDO)          |   
+|                                                 |   * ESRI ArcGIS Server 9.3+                  |         
+| * Desktop                                       |                                              |           
+|                                                 | * Desktop                                    |               
+|   * uDig                                        |                                              |           
+|   * QGIS                                        |   * Cadcorp SIS                              |      
+|   * mezoGIS                                     |   * Microimages TNTmips GIS                  |         
+|   * OpenJUMP                                    |   * ESRI ArcGIS 9.3+                         |           
+|   * OpenEV                                      |   * Manifold                                 |   
+|   * SharpMap SDK for Microsoft.NET 2.0          |   * GeoConcept                               |       
+|   * ZigGIS for ArcGIS/ArcObjects.NET            |   * MapInfo (v10)                            |           
+|   * GvSIG                                       |   * AutoCAD Map 3D (using FDO)               |   
+|   * GRASS                                       |                                              |           
+|                                                 |                                              |             
++-------------------------------------------------+----------------------------------------------+
 
-ST_Y_ : Returns the Y coordinate of the point, or NULL if not available. Input must be a point.
+Additional Reading
+------------------
 
-.. _SQL: https://en.wikipedia.org/wiki/SQL
+Casanova, M., et. al.: Bancos de Dados Geográficos. Cap. 1, 6, 8 e 11. MundoGEO. 2005
 
-.. _Encode: https://en.wikipedia.org/wiki/Character_encoding
+Yeung, A., Hall, G.: Spatial Database Systems. GeoJournal Library, vol 87. Chapters 1 e 2. Springer, Heidelberd (2007)
 
-.. _glob: https://en.wikipedia.org/wiki/Glob_%28programming%29
+.. _PostGIS: https://postgis.net/
 
-.. _globbing: https://en.wikipedia.org/wiki/Glob_%28programming%29
+.. _B-tree: http://en.wikipedia.org/wiki/B-tree
 
-.. _SFSQL: http://www.opengeospatial.org/standards/sfa
+.. _R-tree: http://en.wikipedia.org/wiki/R-tree
+
+.. _Quadtrees: http://en.wikipedia.org/wiki/Quadtree
+
+.. _OGC: http://www.opengeospatial.org/
+
+.. _PostgreSQL: http://www.postgresql.org/
+
+.. _shapefile: http://en.wikipedia.org/wiki/Shapefile
+
+.. _GeoPackage: https://www.geopackage.org/
+
+.. _GEOS: http://trac.osgeo.org/geos
 
 .. _SQLMM: https://www.iso.org/standard/60343.html
 
-.. _WKT: https://en.wikipedia.org/wiki/Well-known_text_representation_of_geometry
-
-.. _WKB: https://en.wikipedia.org/wiki/Well-known_binary
-
-.. _GML: https://en.wikipedia.org/wiki/Geography_Markup_Language
-
-.. _KML: https://en.wikipedia.org/wiki/Keyhole_Markup_Language
-
-.. _JSON: https://en.wikipedia.org/wiki/JSON
-
-.. _GeoJSON: https://en.wikipedia.org/wiki/GeoJSON
-
-.. _SVG: https://en.wikipedia.org/wiki/Scalable_Vector_Graphics
-
-.. _EWKT: https://en.wikipedia.org/wiki/Well-known_text_representation_of_geometry#Format_variations
-
-.. _EWKB: https://en.wikipedia.org/wiki/Well-known_text_representation_of_geometry#Format_variations
-
-.. _SRID: https://en.wikipedia.org/wiki/Spatial_reference_system
-
-.. _ST_Area: http://postgis.net/docs/ST_Area.html 
-
-.. _ST_AsText: http://postgis.net/docs/ST_AsText.html
-
-.. _ST_AsBinary: http://postgis.net/docs/ST_AsBinary.html
-
-.. _ST_EndPoint: http://postgis.net/docs/ST_EndPoint.html
-
-.. _ST_AsEWKB: http://postgis.net/docs/ST_AsEWKB.html
-
-.. _ST_AsEWKT: http://postgis.net/docs/ST_AsEWKT.html
-
-.. _ST_AsGeoJSON: http://postgis.net/docs/ST_AsGeoJSON.html
-
-.. _ST_AsGML: http://postgis.net/docs/ST_AsGML.html
-
-.. _ST_AsKML: http://postgis.net/docs/ST_AsKML.html
-
-.. _ST_AsSVG: http://postgis.net/docs/ST_AsSVG.html
-
-.. _ST_ExteriorRing: http://postgis.net/docs/ST_ExteriorRing.html
-
-.. _ST_GeometryN: http://postgis.net/docs/ST_GeometryN.html
-
-.. _ST_GeomFromGML: http://postgis.net/docs/ST_GeomFromGML.html
-
-.. _ST_GeomFromKML: http://postgis.net/docs/ST_GeomFromKML.html
-
-.. _ST_GeomFromText: http://postgis.net/docs/ST_GeomFromText.html
-
-.. _ST_GeomFromWKB: http://postgis.net/docs/ST_GeomFromWKB.html
-
-.. _ST_GeometryType: http://postgis.net/docs/ST_GeometryType.html
-
-.. _ST_InteriorRingN: http://postgis.net/docs/ST_InteriorRingN.html
-
-.. _ST_Length: http://postgis.net/docs/ST_Length.html
-
-.. _ST_MakePoint: https://postgis.net/docs/ST_MakePoint.html
-
-.. _ST_NDims: http://postgis.net/docs/ST_NDims.html
-
-.. _ST_NPoints: http://postgis.net/docs/ST_NPoints.html
-
-.. _ST_NRings: http://postgis.net/docs/ST_NRings.html
-
-.. _ST_NumGeometries: http://postgis.net/docs/ST_NumGeometries.html
-
-.. _ST_Perimeter: http://postgis.net/docs/ST_Perimeter.html
-
-.. _ST_SRID: http://postgis.net/docs/ST_SRID.html
-
-.. _ST_StartPoint: http://postgis.net/docs/ST_StartPoint.html
-
-.. _ST_X: http://postgis.net/docs/ST_X.html
-
-.. _ST_Y: http://postgis.net/docs/ST_Y.html
+.. _SFSQL: http://www.opengeospatial.org/standards/sfa
